@@ -1,0 +1,20 @@
+{
+  "duration": 17.3,
+  "beats": [
+    {
+      "name": "blocked",
+      "start": 0,
+      "end": 6.85
+    },
+    {
+      "name": "register",
+      "start": 6.85,
+      "end": 11.75
+    },
+    {
+      "name": "passed",
+      "start": 11.75,
+      "end": 17.3
+    }
+  ]
+}

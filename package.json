@@ -1,0 +1,37 @@
+{
+  "name": "mcp-convention-gate",
+  "version": "0.1.0",
+  "description": "MCP server that enforces development convention gates — blocks commits until required reviews are registered",
+  "main": "gate-store.js",
+  "bin": {
+    "mcp-convention-gate": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "server.js",
+    "hook.js",
+    "gate-store.js"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test.js"
+  },
+  "keywords": ["mcp", "conventions", "gates", "code-review", "ai-agents", "enforceable"],
+  "author": "Dvir Shamay",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/univercitylake/mcp-convention-gate.git"
+  },
+  "homepage": "https://github.com/univercitylake/mcp-convention-gate#readme",
+  "bugs": {
+    "url": "https://github.com/univercitylake/mcp-convention-gate/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  }
+}

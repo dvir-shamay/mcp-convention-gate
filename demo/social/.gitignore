@@ -1,0 +1,9 @@
+# Rendered GIFs + working intermediates are regenerable via render.py.
+# The final published assets live in ../platform/.
+*.gif
+_*
+hero-color.cast
+hero-color.manifest.json
+A-verbose.cast
+B-compact.cast
+C-narrow.cast

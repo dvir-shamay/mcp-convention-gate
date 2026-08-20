@@ -1,0 +1,28 @@
+# CI for mcp-convention-gate.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - name: Unit tests (fresh clone)
+        run: npm test
+      - name: Demo flow end-to-end (block -> allow)
+        run: node demo/harness/verify.js
+      - name: Package contents unchanged (7 files)
+        run: npm pack --dry-run

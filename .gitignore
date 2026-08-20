@@ -1,0 +1,3 @@
+node_modules/
+.gate-store.json
+*.tgz
