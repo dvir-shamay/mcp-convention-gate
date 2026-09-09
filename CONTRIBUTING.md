@@ -7,7 +7,7 @@ dependency-light are very welcome.
 ## Development setup
 
 ```bash
-git clone https://github.com/univercitylake/mcp-convention-gate.git
+git clone https://github.com/dvir-shamay/mcp-convention-gate.git
 cd mcp-convention-gate
 npm ci
 ```

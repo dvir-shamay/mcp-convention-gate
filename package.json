@@ -25,11 +25,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/univercitylake/mcp-convention-gate.git"
+    "url": "git+https://github.com/dvir-shamay/mcp-convention-gate.git"
   },
-  "homepage": "https://github.com/univercitylake/mcp-convention-gate#readme",
+  "homepage": "https://github.com/dvir-shamay/mcp-convention-gate#readme",
   "bugs": {
-    "url": "https://github.com/univercitylake/mcp-convention-gate/issues"
+    "url": "https://github.com/dvir-shamay/mcp-convention-gate/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"
