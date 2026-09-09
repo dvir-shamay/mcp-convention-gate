@@ -75,5 +75,5 @@ Found by a security/architecture/correctness review pass before first release; a
   exported), so its handlers can actually be unit-tested — it had zero direct test coverage before this pass.
   21 new tests added across `hook.js`, `GateStore`, and `server.js` (40 total, up from 19).
 
-[Unreleased]: https://github.com/univercitylake/mcp-convention-gate/commits/main
-[0.1.0]: https://github.com/univercitylake/mcp-convention-gate/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dvir-shamay/mcp-convention-gate/commits/main
+[0.1.0]: https://github.com/dvir-shamay/mcp-convention-gate/releases/tag/v0.1.0
