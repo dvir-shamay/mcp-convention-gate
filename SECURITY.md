@@ -33,12 +33,31 @@ gate makes no guarantee.
 These exist by design so the gate never becomes an unrecoverable lock. Both are auditable:
 
 - **`GATE_BYPASS=1` (or `GATE_BYPASS=true`) environment variable** — the pre-commit hook prints a `BYPASSED`
-  warning to stderr and allows the commit. Intended for CI, automation, or an explicit human override.
+  warning to stderr, durably appends a timestamped record (reason, OS user, working directory) to
+  `.gate-bypass.log` (gitignored, local-only), and allows the commit. Intended for CI, automation, or an
+  explicit human override.
 - **MCP `guarded_commit` `override`** — passing `override: true` with an `override_reason` records the override
-  (reason, timestamp, missing/failed gates) on the session and authorizes the commit. The reason is mandatory.
+  (reason, timestamp, missing/failed gates) on the session's audit trail. This does **not** touch git or
+  bypass the pre-commit hook — only `GATE_BYPASS` or `--no-verify` do that. The reason is mandatory but is
+  self-attested, not independently verified (see "Self-attestation" below).
 
 If you need to guarantee these cannot be used in a given environment, enforce the gate again outside the
 developer's machine (server-side hook or CI check).
+
+## Self-attestation
+
+`register_gate` records that a named role reported `pass`/`fail`/`warn` — it does not verify the review
+actually happened, inspect the diff, or authenticate the caller. Any process able to reach the MCP server over
+stdio can call these tools directly. This is a structured audit trail, not independent verification; treat it
+as evidence a review was *claimed*, not proof one occurred. The git hook's blocking behavior does not depend
+on trusting this data beyond "a `pass` was recorded" — it has no stronger guarantee to offer either.
+
+## Path overrides (`MCP_GATE_STORE_PATH`, `MCP_GATE_BYPASS_LOG`)
+
+Both env vars are treated as trusted, operator-configured input (they come from whoever controls the hook's
+or server's launch environment, e.g. `.vscode/mcp.json`) — not attacker input. A value that resolves outside
+the repo root is **honored, not silently substituted**, but a `WARNING` is printed either way so an
+unintentional out-of-repo path is never silent.
 
 ## Reporting a vulnerability
 

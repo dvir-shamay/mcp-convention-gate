@@ -35,9 +35,12 @@ This installs a `pre-commit` hook, a `.gate-config.json` (which reviews are requ
 (`.vscode/mcp.json`). From then on:
 
 - Your AI agent registers each completed review through the MCP tools (`create_gate_session`,
-  `register_gate`), then calls `guarded_commit` to **authorize** the commit. `guarded_commit` doesn't commit
-  for you — git does; the `pre-commit` hook lets git proceed only once the gate is satisfied.
+  `register_gate`), checks `gate_status` until `commit_allowed` is `true`, then runs the **real** `git commit`
+  itself — no MCP call authorizes it, the `pre-commit` hook enforces automatically at that point.
 - **Any** commit — from the agent or from a terminal — is blocked until the required reviews are registered.
+- Call `guarded_commit` only **after** that commit succeeds, purely to log it to the session's audit trail.
+  Calling it *before* committing marks the session committed, and the hook will then block the commit you
+  were about to make — see the `guarded_commit` row below.
 
 ```bash
 npx mcp-convention-gate status   # show current gate status
@@ -48,8 +51,10 @@ npx mcp-convention-gate check    # run the pre-commit check manually
 
 Two enforcement layers, both fail-closed:
 
-1. **MCP tool level** — `guarded_commit` returns `BLOCKED` until every required review is registered.
-2. **Git hook level** — a `pre-commit` hook blocks `git commit` at the OS level, even from the terminal.
+1. **Git hook level** — a `pre-commit` hook blocks `git commit` at the OS level, even from the terminal. This
+   is the actual enforcement; nothing else needs to run for a commit to be blocked.
+2. **MCP tool level** — `gate_status` reports whether `commit_allowed` is `true` before you commit;
+   `guarded_commit` is an audit-log call for *after* a commit succeeds, not a gate you pass through to get one.
 
 Pick which reviews are mandatory in `.gate-config.json`:
 
@@ -69,11 +74,17 @@ The **default** `required_gates` is an opinionated nine-role review panel (`spec
 { "enabled": true, "required_gates": ["code-review"] }
 ```
 
-> **Two lists — keep them in sync.** The git hook reads `required_gates` from `.gate-config.json`. The MCP
-> `guarded_commit` tool checks the *session's own* required gates (set when you call `create_gate_session`,
-> defaulting to the built-in set). They are independent: if they diverge, a commit can satisfy one layer but
-> not the other. For consistent behavior, pass the same list to `create_gate_session` that you put in
-> `.gate-config.json`.
+> **If `.gate-config.json` is missing or fails to parse, the gate is treated as disabled** (not enforced) —
+> printed as a `WARNING` to stderr, never silently. This favors not disrupting every commit repo-wide over
+> silently enforcing from a file most contributors never touch directly; fix or restore the file to configure
+> gates intentionally.
+
+> **Session overrides are honored on both layers.** If `create_gate_session` sets its own `required_gates`,
+> the git hook enforces that session's list too (it checks a session's own `requiredGates` before falling back
+> to `.gate-config.json`) — not just the MCP tools. Omitting `required_gates` at session creation falls back
+> to `.gate-config.json` on both sides as well, so the common case (no override) stays in sync automatically.
+> They can only diverge if you deliberately pass an ad hoc list to `create_gate_session` that isn't reflected
+> anywhere else you track — an intentional escalation, not a footgun.
 
 ## MCP tools
 
@@ -84,7 +95,7 @@ definition in `server.js` is the source of truth.
 | --- | --- | --- | --- |
 | `create_gate_session` | `description` | `required_gates[]` | Opens a session for a task/sprint/PR and returns its `session_id`. Omitting `required_gates` uses the default set. |
 | `register_gate` | `session_id`, `gate_name`, `result` (`pass \| fail \| warn`) | `agent`, `findings[]`, `metadata` | Records that one review completed. Only `pass` counts toward satisfying a gate. |
-| `guarded_commit` | `session_id`, `commit_message` | `override`, `override_reason` | Returns `allowed` only when every required gate passed, else `blocked`. `override: true` (with an `override_reason`) records an audited bypass. It **authorizes** — git performs the commit. |
+| `guarded_commit` | `session_id`, `commit_message` | `override`, `override_reason` | **Call this AFTER `git commit` succeeds, never before** — it's an audit-log record, not an authorization; calling it first marks the session committed and the hook then blocks the commit you were about to make. Returns `allowed` if every required gate had passed at call time, else `blocked`. `override: true` (with a mandatory `override_reason`) records a self-attested override in the audit trail — it does not touch git; use `GATE_BYPASS` for that. |
 | `gate_status` | `session_id` | — | Reports registered / missing / failed gates and whether a commit is allowed. |
 | `list_sessions` | — | `limit` (default 10) | Lists sessions, most recent first, for auditing which tasks went through review. |
 
