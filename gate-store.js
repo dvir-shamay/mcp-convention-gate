@@ -35,10 +35,17 @@ class GateStore {
   }
 
   /**
-   * Register that a gate was completed.
+   * Register that a gate was completed. Validates `result` against the
+   * declared pass|fail|warn enum -- accepting anything else (e.g. a typo
+   * like "passed") would silently satisfy neither the passed-set nor the
+   * failed-set, leaving the gate permanently "missing" with no diagnostic.
    */
   registerGate(sessionId, gate) {
     const session = this._getSession(sessionId);
+    const VALID_RESULTS = new Set(['pass', 'fail', 'warn']);
+    if (!VALID_RESULTS.has(gate.result)) {
+      throw new Error(`Invalid gate result "${gate.result}" for gate "${gate.name}" -- must be one of: pass, fail, warn`);
+    }
     const record = {
       name: gate.name,
       agent: gate.agent || 'unknown',
@@ -55,23 +62,28 @@ class GateStore {
   /**
    * Check whether all required gates have passed for a session.
    * Returns { allowed: bool, missing: string[], failed: string[] }
+   *
+   * Guards session.gates (a hand-edited/legacy store entry could omit it);
+   * validates requiredGates is a non-empty array (a non-array crashes
+   * .filter(), an unvalidated empty array silently makes every session
+   * "already passing" with zero gates registered); matches gate names
+   * case-insensitively; and a gate registered result:'fail' now appears only
+   * in `failed`, never also in `missing`.
    */
   checkPrerequisites(sessionId, requiredGates) {
     const session = this._getSession(sessionId);
-    const passed = new Set(
-      session.gates
-        .filter(g => g.result === 'pass')
-        .map(g => g.name)
-    );
-    const failed = session.gates
-      .filter(g => g.result === 'fail')
-      .map(g => g.name);
-    const missing = requiredGates.filter(g => !passed.has(g));
+    const required = (Array.isArray(requiredGates) && requiredGates.length > 0) ? requiredGates : [];
+    const gates = session.gates || [];
+    const norm = (name) => String(name).trim().toLowerCase();
+    const passedNorm = new Set(gates.filter(g => g.result === 'pass').map(g => norm(g.name)));
+    const failedNorm = new Set(gates.filter(g => g.result === 'fail').map(g => norm(g.name)));
+    const missing = required.filter(g => !passedNorm.has(norm(g)) && !failedNorm.has(norm(g)));
+    const failed = required.filter(g => failedNorm.has(norm(g)));
     return {
       allowed: missing.length === 0 && failed.length === 0,
       missing,
       failed,
-      registered: [...passed],
+      registered: [...new Set(gates.filter(g => g.result === 'pass').map(g => g.name))],
     };
   }
 
@@ -113,8 +125,32 @@ class GateStore {
     try {
       const dir = path.dirname(this.persistPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      // Merge with what's currently on disk before overwriting, so a second
+      // concurrent GateStore instance (e.g. two editor windows open on the
+      // same repo) can't silently clobber sessions the first instance
+      // already wrote and this instance never loaded into memory. Per
+      // session ID: one present on disk but not in this instance's memory is
+      // adopted as-is; one present in both keeps THIS instance's copy (it's
+      // the one that just changed -- _persist() only runs right after a
+      // local mutation). Best-effort merge, not a lock: two instances racing
+      // to mutate the SAME session id concurrently can still last-writer-win
+      // that one session.
+      if (fs.existsSync(this.persistPath)) {
+        try {
+          const onDisk = JSON.parse(fs.readFileSync(this.persistPath, 'utf8'));
+          if (Array.isArray(onDisk)) {
+            for (const s of onDisk) {
+              if (s && s.id && !this.sessions.has(s.id)) this.sessions.set(s.id, s);
+            }
+          }
+        } catch (e) { /* on-disk copy unreadable -- persist in-memory state only */ }
+      }
       const data = JSON.stringify([...this.sessions.values()], null, 2);
-      fs.writeFileSync(this.persistPath, data, 'utf8');
+      // Atomic write: same-directory temp file + rename, so a crash or a
+      // concurrent reader never observes a truncated/partial store.
+      const tmp = `${this.persistPath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tmp, data, 'utf8');
+      fs.renameSync(tmp, this.persistPath);
     } catch (e) {
       // Silent — persistence is optional
     }

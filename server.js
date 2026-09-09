@@ -5,6 +5,7 @@
 // Enforces development convention gates — agents must register completed reviews
 // before a guarded commit is allowed. Demonstrates enforceable AI conventions.
 
+const fs = require('fs');
 const path = require('path');
 const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
@@ -31,9 +32,57 @@ const DEFAULT_REQUIRED_GATES = [
   'ux-evaluator',
 ];
 
-// Persistence file location (in user's home or CWD)
-const PERSIST_PATH = process.env.MCP_GATE_STORE_PATH ||
-  path.join(process.cwd(), '.gate-store.json');
+// Persistence file location: repo root by default -- can be overridden via
+// MCP_GATE_STORE_PATH (e.g. a launch-config path substitution).
+function findRepoRoot() {
+  let dir = process.cwd();
+  for (let i = 0; i < 20; i++) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return process.cwd();
+}
+const REPO_ROOT = findRepoRoot();
+
+// Warn (don't silently substitute) when an env-var override resolves outside
+// the repo root -- mirrors hook.js's resolveContainedPath. Trusted,
+// operator-configured input, not attacker input; visibility over paternalism.
+function resolveContainedPath(envValue, defaultPath) {
+  if (!envValue) return defaultPath;
+  const resolved = path.resolve(envValue);
+  const rootResolved = path.resolve(REPO_ROOT);
+  if (resolved !== rootResolved && !resolved.startsWith(rootResolved + path.sep)) {
+    process.stderr.write(`[convention-gate] WARNING: path override (${envValue}) resolves outside the repo root -- honoring it, but confirm this is intentional\n`);
+  }
+  return resolved;
+}
+const PERSIST_PATH = resolveContainedPath(process.env.MCP_GATE_STORE_PATH, path.join(REPO_ROOT, '.gate-store.json'));
+
+// Read the SAME .gate-config.json the git hook reads, so a session created
+// without an explicit required_gates list matches what the hook will
+// actually check, instead of falling back to this file's own hardcoded
+// constant while the hook enforces a different list. Calls findRepoRoot()
+// fresh each time (not the frozen REPO_ROOT constant used for PERSIST_PATH)
+// so a config edit is picked up for every new session without restarting
+// the server.
+function loadGateConfig() {
+  try {
+    const configPath = path.join(findRepoRoot(), '.gate-config.json');
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+  } catch (e) { /* fall through to built-in default */ }
+  return {};
+}
+
+// Validate a required_gates source (caller's arg or .gate-config.json's
+// value) is a non-empty array before accepting it -- an unvalidated empty
+// array would silently create an always-passing zero-gate session.
+function validRequiredGates(candidate) {
+  return (Array.isArray(candidate) && candidate.length > 0) ? candidate : null;
+}
 
 // ── Initialize Store ─────────────────────────────────────────────────────────
 
@@ -44,7 +93,7 @@ const store = new GateStore({ persistPath: PERSIST_PATH });
 const TOOLS = [
   {
     name: 'create_gate_session',
-    description: 'Create a new gate session for a task/sprint/PR. Returns a session ID used for subsequent gate registrations and commit checks.',
+    description: 'Create a new gate session for a task/sprint/PR. Returns a session ID used for subsequent gate registrations and commit checks. If required_gates is omitted, defaults to this repo\'s .gate-config.json (falling back to the built-in 9-role set if that file is absent).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -55,7 +104,7 @@ const TOOLS = [
         required_gates: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Override the default required gates. If omitted, uses the 9-agent default set.',
+          description: 'Override the default required gates. If omitted, uses .gate-config.json\'s required_gates, or the built-in 9-agent default if that file is absent.',
         },
       },
       required: ['description'],
@@ -108,7 +157,7 @@ const TOOLS = [
   },
   {
     name: 'guarded_commit',
-    description: 'Attempt a guarded commit. Checks that all required gates have been registered with passing results. Returns ERROR with missing/failed gates if prerequisites are not met. Returns OK with commit authorization if all gates passed.',
+    description: 'AUDIT RECORD ONLY — call this AFTER `git commit` has already succeeded, never before. It does not perform or authorize the commit: on success it marks the session "committed" in the store, and the git pre-commit hook treats a committed session as used up. Calling this BEFORE running git commit will cause that following commit to be BLOCKED (the hook will see no eligible session). Correct flow: register_gate for every required role -> gate_status to confirm commit_allowed:true -> run the real `git commit` yourself -> optionally call guarded_commit afterward to log it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -118,11 +167,11 @@ const TOOLS = [
         },
         commit_message: {
           type: 'string',
-          description: 'Proposed commit message',
+          description: 'The commit message of the commit that was ALREADY made (this call records it, it does not create it)',
         },
         override: {
           type: 'boolean',
-          description: 'Force commit even with missing gates (records override in audit log). Requires explicit user authorization.',
+          description: 'Force-record commit even with missing gates (records override in audit log, self-attested — not independently verified). Does NOT bypass the git hook itself — see GATE_BYPASS for that.',
         },
         override_reason: {
           type: 'string',
@@ -166,7 +215,11 @@ const TOOLS = [
 function handleCreateSession(args) {
   const id = store.createSession(args.description);
   const session = store.getSession(id);
-  const requiredGates = args.required_gates || DEFAULT_REQUIRED_GATES;
+  // Config-file fallback before the hardcoded default, each validated as a
+  // non-empty array before being accepted.
+  const requiredGates = validRequiredGates(args.required_gates)
+    || validRequiredGates(loadGateConfig().required_gates)
+    || DEFAULT_REQUIRED_GATES;
 
   // Store required gates on the session for later checking
   session.requiredGates = requiredGates;
@@ -240,7 +293,7 @@ function handleGuardedCommit(args) {
         store.markCommitted(args.session_id);
         return {
           status: 'override_commit',
-          warning: 'COMMIT ALLOWED VIA OVERRIDE — audit trail recorded.',
+          warning: 'AUDIT RECORD ONLY — this does not touch git. If you have not already run `git commit --no-verify` or set GATE_BYPASS=1, the real commit is still blocked.',
           override_reason: args.override_reason,
           missing_gates: check.missing,
           failed_gates: check.failed,
@@ -260,11 +313,11 @@ function handleGuardedCommit(args) {
       };
     }
 
-    // All gates passed — allow commit
+    // All gates passed — record the (already-made) commit
     store.markCommitted(args.session_id);
     return {
       status: 'allowed',
-      message: 'All gates passed. Commit authorized.',
+      message: 'All gates passed. Recorded as authorized — remember this call must come AFTER the real `git commit`, never before (see tool description).',
       commit_message: args.commit_message,
       session_id: args.session_id,
       gates_passed: check.registered,
@@ -365,7 +418,24 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  process.stderr.write(`Fatal: ${err.message}\n`);
-  process.exit(1);
-});
+// Guard main() behind require.main (matches hook.js's own pattern) and
+// export the pure dispatch/handler functions + store, so this file can
+// actually be unit-tested (imported + called directly) instead of only ever
+// being smoke-tested by spawning it as a live stdio process.
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(`Fatal: ${err.message}\n`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  dispatch,
+  handleCreateSession,
+  handleRegisterGate,
+  handleGuardedCommit,
+  handleGateStatus,
+  handleListSessions,
+  store,
+  TOOLS,
+};
