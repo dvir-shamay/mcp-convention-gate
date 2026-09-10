@@ -3,7 +3,7 @@
 > **Enforce your process by construction — not by prompt.**
 > No review, no commit.
 
-![mcp-convention-gate demo](https://raw.githubusercontent.com/dvir-shamay/mcp-convention-gate/main/demo/demo.gif)
+![mcp-convention-gate demo](demo/demo.gif)
 
 An **MCP server + git pre-commit hook** that **refuses a commit until a required review is registered.** It
 enforces the step *outside* the model's prompt and discretion — so an AI coding agent can't skip it, no matter
